@@ -1,0 +1,563 @@
+---
+title: "Data Viz and Analysis of Olympic Data"
+author: "Chad Himes"
+date: "2026-04-27"
+output: slidy_presentation
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+
+library(tidyverse)
+library(plotly)
+library(geomtextpath)
+library(scales)
+library(ggthemes)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(patchwork)
+
+
+# https://www.kaggle.com/datasets/piterfm/olympic-games-medals-19862018
+athletes_1896_2022 <- read_csv("data/olympic_athletes.csv")
+hosts_1896_2022 <- read_csv("data/olympic_hosts.csv")
+medals_1896_2022 <- read_csv("data/olympic_medals.csv")
+results_1896_2022 <- read_csv("data/olympic_results.csv")
+
+# https://www.kaggle.com/datasets/piterfm/paris-2024-olympic-summer-games
+medal_count_2024 <- read_csv("data/paris_2024/medals_total.csv")
+detailed_medals_2024 <- read_csv("data/paris_2024/medals.csv")
+schedule_2024 <- read_csv("data/paris_2024/schedules.csv")
+nocs_2024 <- read_csv("data/paris_2024/nocs.csv")
+medalists_2024 <- read_csv("data/paris_2024/medallists.csv")
+events_2024 <- read_csv("data/paris_2024/events.csv")
+athletes_2024 <- read_csv("data/paris_2024/athletes.csv")
+
+#Also have lots of data for specific sports but idk how I could use it
+
+# https://www.kaggle.com/datasets/piterfm/tokyo-2020-paralympics
+para_medal_count_2024 <- read_csv("data/para_paris_2024/medals_total.csv")
+para_detailed_medals_2024 <- read_csv("data/para_paris_2024/medals.csv")
+para_schedule_2024 <- read_csv("data/para_paris_2024/schedules.csv")
+para_nocs_2024 <- read_csv("data/para_paris_2024/nocs.csv")
+para_medalists_2024 <- read_csv("data/para_paris_2024/medallists.csv")
+para_sports_2024 <- read_csv("data/para_paris_2024/sports.csv")
+para_athletes_2024 <- read_csv("data/para_paris_2024/athletes.csv")
+
+#Also have lots of data for specific sports but idk how I could use it
+
+# https://www.kaggle.com/datasets/piterfm/milano-cortina-2026-olympic-winter-games
+athletes_2026 <- read_csv("data/milano_cortina_2026/athletes.csv")
+medallists_2026 <- read_csv("data/milano_cortina_2026/medallists.csv")
+medal_count_2026 <- read_csv("data/milano_cortina_2026/medals.csv")
+schedule_2026 <- read_csv("data/milano_cortina_2026/schedules.csv")
+
+# Other datasets (treating all 4 above as one since all from piterfm)
+
+# https://www.kaggle.com/datasets/dataanalyst001/world-population-by-country-2024
+world_pop_2024 <- read_csv("data/world_population_by_country_2024.csv")
+
+# https://www.kaggle.com/datasets/enwelumchiamaka/world-population-by-country-2026
+world_pop_2026 <- read_csv("data/world_population_by_country_2026.csv")
+
+# https://www.kaggle.com/datasets/codebynadiia/gdp-per-country-2020-2024-csv
+gdp_2020_2024 <- read_csv("data/gdp_2020_2024.csv")
+
+# Some simple cleaning of the dataset
+# Wanted to use separate delim but runs into issues since rio-de-jinerio-2016 for example has multiple "-"
+
+results_1896_2022 <- results_1896_2022 |> 
+  mutate(year = as.numeric(
+    substr(slug_game, nchar(slug_game) - 3, nchar(slug_game))),
+    .before = 4)
+
+medals_1896_2022 <- medals_1896_2022 |> 
+  mutate(year = as.numeric(
+    substr(slug_game, nchar(slug_game) - 3, nchar(slug_game))),
+    .before = 3)
+
+medals_1896_2022 <- medals_1896_2022 |> 
+  mutate(
+    season = if_else(year < 1924, "Summer",
+                     if_else( year <= 1992, "Combined",
+                              if_else(year %% 4 == 2, "Winter", 
+                                      "Summer"))))
+
+medals_per_year_1896_2022 <- medals_1896_2022 |> 
+  count(year, season)
+
+
+
+```
+
+## Preliminary Questions:
+
+-   How much have the Olympics grown over time?
+-   How has the gender of athletes changes over time?
+    -   Are some seasons more equal than others?
+-   Which countries have the most sucess at the Olympics?
+    -   Look into overall medal counts
+    -   Does location change who wins the Winter vs Summer?
+    -   What country has the most medals per million people?
+    -   Does the economic success (GDP) of a country align with their success?
+
+## How has he Olympics grown?
+
+One of the best ways to measure the growth of the Olympics is to see how the number of medals has changed over the years. As shown in this graph, over time the Olympics have steadily grown over the years, even when the Olympics were split into their respective seasons in 1993.
+
+```{r, warning = FALSE}
+
+medals_per_year_w_lines <- ggplot(medals_per_year_1896_2022, aes(x = year, y = n)) +
+  geom_point(aes(color = season)) +
+  geom_textvline(xintercept = 1922, label = "Added Winter Sports to Summer Games", hjust = .95,
+                 linetype = 3, vjust = 1.3, color = "black", size = 3) +
+  geom_textvline(xintercept = 1993, label = "Seperate Summer and Winter Games", hjust = .4,
+                 linetype = 3, vjust = 1.3, color = "black", size = 3) +
+  scale_color_manual(values = c("Summer" = "red", "Winter" = "blue", "Combined" = "purple")) +
+  labs(
+    title = "Medals Per Year Split by Type of Olympic Game",
+    x = "Year", y = "Number of Medals",
+    color = "Type of Olympic Game"
+  )
+
+plot(medals_per_year_w_lines)
+```
+
+## Male/Female Gender Split
+
+Using Olympic medal data to show the gender split in the olympics over time.
+
+```{r}
+
+gender_medal_hist <- ggplot(medals_1896_2022, aes(x = year, fill = event_gender)) +
+  geom_histogram(binwidth = 4, position = "fill") +
+  labs(
+    title = "How has the gender split of olympic medals changed over time?",
+    x = "Year", y = "Proportion",
+    fill = "Gender of Event"
+  )
+
+small_athletes_2024 <- athletes_2024 |> 
+  select(name, gender, country_code) |> 
+  mutate(category = "Summer") 
+
+small_para_athletes_2024 <- para_athletes_2024 |> 
+  select(name, gender, country_code) |> 
+  mutate(category = "Para Summer")
+
+small_athletes_2026 <- athletes_2026 |> 
+  mutate(gender = if_else(gender == "M", "Male", "Female")) |> 
+  select(name, gender, country_code) |> 
+  mutate(category = "Winter")
+
+combined_recent_athletes <- rbind(small_athletes_2024, small_para_athletes_2024, small_athletes_2026)
+
+```
+
+::::: columns
+::: column
+```{r}
+ggplotly(gender_medal_hist)
+```
+:::
+
+::: column
+```{r}
+
+ggplot(combined_recent_athletes, aes(x = fct_infreq(gender), fill = category)) +
+  geom_bar(aes(y = after_stat(prop), group = category)) +
+  facet_wrap(~category) +
+  scale_fill_manual(values = c("Para Summer" = "hotpink", "Summer" = "red", "Winter" = "blue")) +
+  labs(
+    title = "Proportion of Athletes Gender in Recent Olympics",
+    subtitle = "From Summer Paris 2024: Paralympics and Olympics and Winter Milano-Cortina 2026",
+    x = "Gender", y = "Proportion",
+    fill = "Olympic Game"
+  )
+```
+:::
+:::::
+
+## In recent year, what countries win the most medals?
+
+Let's compare the top 10 countries by total medal count for the most recent Olympics (Paris 2024 and Milano-Cortina 2026)
+
+```{r}
+
+small_medal_count_2024 <- medal_count_2024 |> 
+  mutate(gold = `Gold Medal`,
+         silver = `Silver Medal`,
+         bronze = `Bronze Medal`,
+         total = Total) |> 
+  select(country_code, gold, silver, bronze, total) |> 
+  mutate(category = "Summer")
+
+small_para_medal_count_2024 <- para_medal_count_2024 |> 
+  mutate(gold = `Gold Medal`,
+         silver = `Silver Medal`,
+         bronze = `Bronze Medal`,
+         total = Total) |> 
+  select(country_code, gold, silver, bronze, total) |> 
+  mutate(category = "Para Summer")
+
+small_medal_count_2026 <- medal_count_2026 |> 
+  select(country_code, gold, silver, bronze, total) |> 
+  mutate(category = "Winter")
+
+
+top_10_medals_2024 <- small_medal_count_2024 |> 
+  slice_head(n = 10)
+
+top_10_para_medals_2024 <- small_para_medal_count_2024 |> 
+  slice_head(n = 10)
+
+top_10_medals_2026 <- small_medal_count_2026 |> 
+  slice_head(n = 10)
+
+combined_top_10 <- rbind(top_10_medals_2024, top_10_medals_2026, top_10_para_medals_2024)
+
+
+top_10_para_plot <- ggplot(top_10_para_medals_2024, aes(x = reorder(country_code, total), y = total)) +
+  geom_col(fill = "hotpink") +
+  coord_flip() +
+  labs(
+    title = "Summer Paralympics Paris",
+    x = "Country", y = "Total Medal Count"
+  )
+
+top_10_summer_plot <- ggplot(top_10_medals_2024, aes(x = reorder(country_code, total), y = total)) +
+  geom_col(fill = "red") +
+  coord_flip() +
+  labs(
+    title = "Summer Olympics Paris",
+    x = "Country", y = "Total Medal Count"
+  )
+
+top_10_winter_plot <- ggplot(top_10_medals_2026, aes(x = reorder(country_code, total), y = total)) +
+  geom_col(fill = "blue") +
+  coord_flip() +
+  labs(
+    title = "Winter Olympics Milano-Cortina",
+    x = "Country", y = "Total Medal Count"
+  )
+
+```
+
+:::::: columns
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(top_10_para_plot)
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(top_10_summer_plot)
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(top_10_winter_plot)
+```
+:::
+::::::
+
+## Does location matter when it comes to winning medals?
+
+
+```{r}
+
+# --- IOC to ISO-3 crosswalk ---
+ioc_to_iso3 <- tibble::tribble(
+  ~country_code, ~iso_a3,
+  "USA", "USA", "CHN", "CHN", "GBR", "GBR", "AUS", "AUS",
+  "NED", "NLD", "FRA", "FRA", "GER", "DEU", "ITA", "ITA",
+  "KOR", "KOR", "JPN", "JPN", "NZL", "NZL", "CAN", "CAN",
+  "HUN", "HUN", "ESP", "ESP", "SWE", "SWE", "NOR", "NOR",
+  "BRA", "BRA", "KEN", "KEN", "RSA", "ZAF", "ETH", "ETH",
+  "UZB", "UZB", "IRL", "IRL", "BEL", "BEL", "POL", "POL",
+  "CZE", "CZE", "SRB", "SRB", "ROU", "ROU", "SUI", "CHE",
+  "AUT", "AUT", "FIN", "FIN", "SVK", "SVK", "SLO", "SVN",
+  "LAT", "LVA", "LTU", "LTU", "EST", "EST", "RUS", "RUS",
+  "TPE", "TWN", "HKG", "HKG", "INA", "IDN", "THA", "THA",
+  "IRI", "IRN", "AZE", "AZE", "KAZ", "KAZ", "GEO", "GEO",
+  "ALG", "DZA", "TUN", "TUN", "MAR", "MAR", "EGY", "EGY",
+  "ARG", "ARG", "CUB", "CUB", "COL", "COL", "MEX", "MEX",
+  "GRE", "GRC", "POR", "PRT", "DEN", "DNK", "ISL", "ISL",
+  "CRO", "HRV", "BUL", "BGR", "UKR", "UKR", "TUR", "TUR",
+  "ISR", "ISR", "IND", "IND", "MGL", "MNG", "NMI", "MNP"
+)
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# --- Helper: build an sf object for one dataset ---
+make_map_sf <- function(df, crosswalk, world_sf) {
+  df |>
+    left_join(crosswalk, by = "country_code") |>
+    filter(!is.na(iso_a3)) |>
+    left_join(world_sf |> select(iso_a3, geometry), by = "iso_a3") |>
+    st_as_sf()
+}
+
+summer_sf <- make_map_sf(top_10_medals_2024,      ioc_to_iso3, world)
+para_sf   <- make_map_sf(top_10_para_medals_2024, ioc_to_iso3, world)
+winter_sf <- make_map_sf(top_10_medals_2026,      ioc_to_iso3, world)
+
+# --- Helper: build one map plot ---
+make_olympic_map <- function(highlight_sf, fill_colour, title) {
+  ggplot() +
+    geom_sf(data = world, fill = "grey88", color = "grey70", linewidth = 0.15) +
+    geom_sf(data = highlight_sf, fill = fill_colour, color = "grey20", linewidth = 0.3) +
+    coord_sf(crs = st_crs("ESRI:54030")) +
+    labs(title = title, caption = "Source: Olympic medal data") +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title    = element_text(face = "bold", size = 13),
+      axis.text     = element_blank(),
+      axis.ticks    = element_blank(),
+      panel.grid    = element_blank()
+    )
+}
+
+# --- Build the three maps ---
+map_summer <- make_olympic_map(
+  summer_sf,
+  fill_colour = "#E63946",
+  title       = "2024 Summer Olympics"
+)
+
+map_para <- make_olympic_map(
+  para_sf,
+  fill_colour = "#E040FB",
+  title       = "2024 Paralympic Games"
+)
+
+map_winter <- make_olympic_map(
+  winter_sf,
+  fill_colour = "#1D7FCC",
+  title       = "2026 Winter Olympics"
+)
+
+```
+
+:::::: columns
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+map_summer
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+map_para
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+map_winter
+```
+:::
+::::::
+
+## Medals per Million people
+
+Looking at total medal count is unfair since gives a larger advantage towards larger countries that can send more people. Using population data, I looked at which countries had the most medals per million people.
+
+```{r}
+small_pop_2024 <- world_pop_2024 |> 
+  janitor::clean_names() |> 
+  select(country, population_2024, density_km2, world_rank)
+
+small_pop_2026 <- world_pop_2026 |> 
+  janitor::clean_names() |> 
+  rename(world_rank = rank, density_km2 = density_per_km2) |> 
+  select(country, population_2026, density_km2, world_rank)
+
+
+joined_pop_medals_2024 <- medal_count_2024 |> 
+  left_join(small_pop_2024, join_by(country))
+
+joined_pop_medals_2026 <- medal_count_2026 |> 
+  left_join(small_pop_2026, join_by(country))
+
+para_pop <- para_medal_count_2024 |> 
+  left_join(small_pop_2024, join_by(country))
+
+
+final_pop_medals_2024 <- joined_pop_medals_2024 |> 
+  mutate(medal_per_1000000 = (Total/population_2024) * 1000000)
+
+final_pop_medals_2026 <- joined_pop_medals_2026 |> 
+  mutate(medal_per_1000000 = (total/population_2026) * 1000000)
+
+final_para_pop <- para_pop |> 
+  mutate(medal_per_1000000 = (Total/population_2024) * 1000000)
+
+```
+
+```{r}
+
+para_pop_plot <- ggplot(final_para_pop |> 
+         slice_max(medal_per_1000000, n = 10), aes(x = reorder(country, medal_per_1000000), y = medal_per_1000000)) +
+  geom_col(fill = "hotpink") +
+  coord_flip() +
+  labs(
+    title = "Paralympics 2024",
+    x = "Country",
+    y = "Medals per 1,000,000"
+  )
+
+
+summer_pop_plot <- ggplot(final_pop_medals_2024 |> 
+         slice_max(medal_per_1000000, n = 10), aes(x = reorder(country, medal_per_1000000), y = medal_per_1000000)) +
+  geom_col(fill = "red") +
+  coord_flip() +
+  labs(
+    title = "Summer Olympics 2024",
+    x = "Country",
+    y = "Medals per 1,000,000"
+  )
+
+
+winter_pop_plot <- ggplot(final_pop_medals_2026 |> 
+         slice_max(medal_per_1000000, n = 10), aes(x = reorder(country, medal_per_1000000), y = medal_per_1000000)) +
+  geom_col(fill = "blue") +
+  coord_flip() +
+  labs(
+    title = "Winter Olympics 2026",
+    x = "Country",
+    y = "Medals per 1,000,000"
+  )
+
+```
+
+:::::: columns
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(para_pop_plot)
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(summer_pop_plot)
+```
+:::
+
+::: {.column width="33%"}
+```{r, fig.width=3.5, fig.height=4, out.width="100%", echo=FALSE}
+plot(winter_pop_plot)
+```
+:::
+::::::
+
+## How does the economic output of the country correlate with Medal Count?
+
+This section focused only on the 2024 Summer Olympics and Paralympics.
+
+```{r, warning=FALSE, message=FALSE}
+
+gdp_2024 <- gdp_2020_2024 |> 
+  janitor::clean_names() |> 
+  select(country, x2024) |> 
+  arrange(desc(x2024)) |> 
+  mutate(world_rank = row_number())
+
+
+joined_gdp_2024 <- medal_count_2024 |> 
+  left_join(gdp_2024, join_by(country))
+
+joined_para_gdp_2024 <- para_medal_count_2024 |> 
+  left_join(gdp_2024, join_by(country))
+
+```
+
+::::: columns
+:::column
+```{r, warning=FALSE, message=FALSE}
+ggplot(joined_gdp_2024, aes(x = Total, y= x2024)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(
+    title = "Total medal count by GDP (in dollars) 2024",
+    subtitle = "GDP Data Source: International Monetary Fund (IMF)",
+    x = "Medal Count",
+    y = "2024 GDP (in dollars)"
+  )
+```
+:::
+
+:::column
+```{r, warning=FALSE, message=FALSE}
+library(ggpmisc)
+ggplot(joined_gdp_2024, aes(x = Total, y = x2024)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  scale_x_log10() +
+  scale_y_log10(labels = label_dollar()) +
+  labs(
+    title = "GDP Relationship (Log-Log Scale)",
+    x = "Total Medal Count (log scale)",
+    y = "GDP (in dollars) in 2024 (log scale)"
+  ) +
+  stat_poly_eq(
+    formula = y ~ x,
+    aes(label = after_stat(eq.label)),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = "top"
+  )
+
+```
+:::
+:::::
+
+## Looking at GDP and Paralympics 2024
+
+::::: columns
+:::column
+```{r, warning=FALSE, message=FALSE}
+ggplot(joined_para_gdp_2024, aes(x = Total, y= x2024)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = label_dollar()) +
+  labs(
+    title = "Total Paralympic medal count by GDP (in dollars) 2024",
+    subtitle = "GDP Data Source: International Monetary Fund (IMF)",
+    x = "Medal Count",
+    y = "2024 GDP (in dollars)"
+  )
+```
+:::
+
+:::column
+```{r, warning=FALSE, message=FALSE}
+ggplot(joined_para_gdp_2024, aes(x = Total, y = x2024)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, color = "blue") +
+  scale_x_log10() +
+  scale_y_log10(labels = label_dollar()) +
+  labs(
+    title = "GDP Relationship for Paralympic datset(Log-Log Scale)",
+    x = "Total Medal Count (log scale)",
+    y = "GDP (in dollars) in 2024 (log scale)"
+  ) +
+  stat_poly_eq(
+    formula = y ~ x,
+    aes(label = after_stat(eq.label)),
+    parse = TRUE,
+    label.x.npc = "left",
+    label.y.npc = "top"
+  )
+
+```
+:::
+:::::
+
+
+# Thank you!
